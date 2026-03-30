@@ -3,7 +3,9 @@ import { useMemo, useState } from "react";
 import { formatMoney } from "../utils/format";
 import { useAuthStore } from "../store/useAuthStore";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  "https://ricapinta-backend.onrender.com/api";
 
 const buildGoogleUrl = (query) =>
   `https://www.google.com/search?q=${encodeURIComponent(query)}`;
@@ -128,13 +130,16 @@ export function ProductTechLookupPanel({ products }) {
       const data = await response.json();
 
       if (!response.ok || !data.ok) {
-        throw new Error(data.message || `Error del servidor (${response.status})`);
+        throw new Error(
+          data.message || `Error del servidor (${response.status})`,
+        );
       }
 
       setAiResult(data.brief);
     } catch (err) {
       setAiError(
-        err.message || "No se pudo generar el analisis. Verifica que el servidor este activo.",
+        err.message ||
+          "No se pudo generar el analisis. Verifica que el servidor este activo.",
       );
     } finally {
       setIsLoadingAi(false);
