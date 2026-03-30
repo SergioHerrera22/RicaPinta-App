@@ -81,7 +81,7 @@ export async function loginUser(payload) {
   });
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://ricapinta-backend.onrender.com/auth/login";
 
 export async function createProduct(payload) {
   return request(`${API_BASE_URL}/products`, {
