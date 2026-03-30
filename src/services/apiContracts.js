@@ -30,6 +30,21 @@ export const apiContracts = {
         "Actualiza precios por porcentaje para todos o por categoria",
       body: { scope: "all", category: null, percent: 0 },
     },
+    create: {
+      method: "POST",
+      url: `${API_BASE_URL}/products`,
+      description: "Crea un nuevo producto",
+    },
+    update: {
+      method: "PUT",
+      url: `${API_BASE_URL}/products/:id`,
+      description: "Actualiza un producto existente",
+    },
+    delete: {
+      method: "DELETE",
+      url: `${API_BASE_URL}/products/:id`,
+      description: "Elimina un producto",
+    },
   },
   sales: {
     create: {

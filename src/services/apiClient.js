@@ -81,26 +81,22 @@ export async function loginUser(payload) {
   });
 }
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ||
-  "https://ricapinta-backend.onrender.com/api";
-
 export async function createProduct(payload) {
-  return request(`${API_BASE_URL}/products`, {
-    method: "POST",
+  return request(apiContracts.products.create.url, {
+    method: apiContracts.products.create.method,
     body: JSON.stringify(payload),
   });
 }
 
 export async function updateProduct(id, payload) {
-  return request(`${API_BASE_URL}/products/${encodeURIComponent(id)}`, {
-    method: "PUT",
+  return request(withPathParam(apiContracts.products.update.url, "id", id), {
+    method: apiContracts.products.update.method,
     body: JSON.stringify(payload),
   });
 }
 
 export async function deleteProduct(id) {
-  return request(`${API_BASE_URL}/products/${encodeURIComponent(id)}`, {
-    method: "DELETE",
+  return request(withPathParam(apiContracts.products.delete.url, "id", id), {
+    method: apiContracts.products.delete.method,
   });
 }
