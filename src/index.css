@@ -1,0 +1,124 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Sora:wght@500;600;700&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Manrope", ui-sans-serif, sans-serif;
+  --font-display: "Sora", ui-sans-serif, sans-serif;
+}
+
+@layer base {
+  * {
+    @apply box-border;
+  }
+
+  html,
+  body,
+  #root {
+    @apply min-h-screen;
+  }
+
+  body {
+    @apply m-0 font-sans text-slate-700 antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-display;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply relative overflow-hidden rounded-2xl border border-slate-200 bg-white/85 p-4 shadow-sm backdrop-blur;
+  }
+
+  .field {
+    @apply rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-200;
+  }
+
+  .pill {
+    @apply rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-500;
+  }
+
+  .pill-active {
+    @apply border-amber-300 bg-amber-50 text-amber-800;
+  }
+
+  .title {
+    @apply text-lg font-semibold text-slate-900;
+  }
+}
+
+.bg-app-pattern {
+  background:
+    radial-gradient(
+      circle at 8% 18%,
+      rgba(249, 115, 22, 0.14),
+      transparent 36%
+    ),
+    radial-gradient(
+      circle at 92% 12%,
+      rgba(20, 184, 166, 0.2),
+      transparent 32%
+    ),
+    radial-gradient(
+      circle at 50% 90%,
+      rgba(14, 116, 144, 0.13),
+      transparent 30%
+    ),
+    linear-gradient(135deg, #eff6ff 0%, #f8fafc 45%, #fffbeb 100%);
+}
+
+.reveal-up {
+  animation: reveal-up 420ms ease-out both;
+}
+
+@keyframes reveal-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media print {
+  body {
+    background: #fff !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .print-receipt-wrapper,
+  .print-receipt-wrapper * {
+    visibility: visible !important;
+  }
+
+  .print-receipt-wrapper {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  .print-receipt {
+    width: 80mm;
+    margin: 0 auto;
+    border: none !important;
+    border-radius: 0 !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    padding: 8mm 6mm;
+    color: #000 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
