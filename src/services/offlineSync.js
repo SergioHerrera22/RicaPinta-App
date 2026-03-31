@@ -1,10 +1,16 @@
-import { adjustProductStock, bulkUpdatePrices, createSale } from "./apiClient";
+import {
+  adjustProductStock,
+  bulkUpdatePrices,
+  createSale,
+  syncSaleWithAfip,
+} from "./apiClient";
 
 const OPERATION_MAP = {
   ADJUST_STOCK: async (payload) =>
     adjustProductStock(payload.productId, payload.delta),
   BULK_PRICE_UPDATE: async (payload) => bulkUpdatePrices(payload),
   CREATE_SALE: async (payload) => createSale(payload),
+  SYNC_AFIP_SALE: async (payload) => syncSaleWithAfip(payload),
 };
 
 export const buildPendingOperation = (type, payload) => ({

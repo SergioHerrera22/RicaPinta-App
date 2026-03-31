@@ -76,7 +76,9 @@ export function SalesHistoryPanel({ sales }) {
   return (
     <section className="space-y-4">
       <article className="panel reveal-up">
-        <h2 className="title mb-3">Ventas realizadas</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="title">Ventas realizadas</h2>
+        </div>
 
         <div className="grid gap-3 md:grid-cols-4">
           <label className="text-xs text-slate-500">
@@ -145,6 +147,7 @@ export function SalesHistoryPanel({ sales }) {
               <option>Cuenta corriente</option>
             </select>
           </label>
+
         </div>
 
         <div className="mt-4 grid gap-3 md:grid-cols-3">
@@ -173,6 +176,7 @@ export function SalesHistoryPanel({ sales }) {
             </p>
           </div>
         </div>
+
       </article>
 
       <DocumentsPanel

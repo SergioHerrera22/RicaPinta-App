@@ -34,6 +34,30 @@ const formatMonthLabel = (monthKey) => {
   }).format(date);
 };
 
+const describeBalance = (balance) => {
+  if (balance > 0) {
+    return {
+      label: "Saldo pendiente",
+      tone: "text-rose-700",
+      amount: balance,
+    };
+  }
+
+  if (balance < 0) {
+    return {
+      label: "Saldo a favor",
+      tone: "text-emerald-700",
+      amount: Math.abs(balance),
+    };
+  }
+
+  return {
+    label: "Saldo en cero",
+    tone: "text-slate-900",
+    amount: 0,
+  };
+};
+
 const printHtmlInHiddenFrame = (html) => {
   if (typeof document === "undefined") {
     return false;
@@ -207,10 +231,17 @@ export function CurrentAccountPanel({
       .reverse()
       .find((movement) => movement.type === "credit");
 
+    const totalBalanceDescriptor = describeBalance(totalBalance);
+    const closingBalanceDescriptor = describeBalance(
+      monthlyStatement.closingBalance,
+    );
+
     return {
       totalBalance,
+      totalBalanceDescriptor,
       monthDebits,
       monthCredits,
+      closingBalanceDescriptor,
       salesCountInMonth: salesInMonth.length,
       lastPaymentAt: lastPayment?.createdAt || null,
     };
@@ -218,6 +249,7 @@ export function CurrentAccountPanel({
     accountForm.clientName,
     accountForm.month,
     clientMovements,
+    monthlyStatement.closingBalance,
     monthlyStatement.rows,
     sales,
   ]);
@@ -240,7 +272,7 @@ export function CurrentAccountPanel({
       }),
       "",
       `Saldo inicial del periodo: ${formatMoney(monthlyStatement.openingBalance)}`,
-      `Saldo final del periodo: ${formatMoney(monthlyStatement.closingBalance)}`,
+      `${accountOverview.closingBalanceDescriptor.label} del periodo: ${formatMoney(accountOverview.closingBalanceDescriptor.amount)}`,
       "",
       "RicaPinta",
       "Av Uruguay, Mediagua San Juan",
@@ -334,8 +366,8 @@ export function CurrentAccountPanel({
                 <strong>${formatMoney(monthlyStatement.openingBalance)}</strong>
               </div>
               <div class="total-row total-final">
-                <span>Saldo final</span>
-                <strong>${formatMoney(monthlyStatement.closingBalance)}</strong>
+                <span>${accountOverview.closingBalanceDescriptor.label}</span>
+                <strong>${formatMoney(accountOverview.closingBalanceDescriptor.amount)}</strong>
               </div>
             </section>
 
@@ -486,11 +518,13 @@ export function CurrentAccountPanel({
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           <article className="rounded-xl border border-slate-200 bg-white p-3">
             <p className="text-xs uppercase tracking-[0.12em] text-slate-500">
-              Saldo actual cliente
+              {accountOverview.totalBalanceDescriptor.label}
             </p>
-            <p className="mt-1 inline-flex items-center gap-1 text-lg font-semibold text-slate-900">
+            <p
+              className={`mt-1 inline-flex items-center gap-1 text-lg font-semibold ${accountOverview.totalBalanceDescriptor.tone}`}
+            >
               <Wallet size={16} />
-              {formatMoney(accountOverview.totalBalance)}
+              {formatMoney(accountOverview.totalBalanceDescriptor.amount)}
             </p>
           </article>
 
@@ -607,8 +641,12 @@ export function CurrentAccountPanel({
                   <td className="px-4 py-3 text-right font-semibold text-slate-900">
                     {row.type === "credit" ? formatMoney(row.amount) : "-"}
                   </td>
-                  <td className="px-4 py-3 text-right font-semibold text-slate-900">
-                    {formatMoney(row.balance)}
+                  <td
+                    className={`px-4 py-3 text-right font-semibold ${row.balance < 0 ? "text-emerald-700" : row.balance > 0 ? "text-rose-700" : "text-slate-900"}`}
+                  >
+                    {row.balance < 0
+                      ? `${formatMoney(Math.abs(row.balance))} a favor`
+                      : formatMoney(row.balance)}
                   </td>
                 </tr>
               ))}
@@ -631,8 +669,10 @@ export function CurrentAccountPanel({
           <p>
             Saldo inicial:{" "}
             <strong>{formatMoney(monthlyStatement.openingBalance)}</strong> ·
-            Saldo final:{" "}
-            <strong>{formatMoney(monthlyStatement.closingBalance)}</strong>
+            {accountOverview.closingBalanceDescriptor.label}:{" "}
+            <strong className={accountOverview.closingBalanceDescriptor.tone}>
+              {formatMoney(accountOverview.closingBalanceDescriptor.amount)}
+            </strong>
           </p>
 
           <div className="flex flex-wrap items-center gap-2">

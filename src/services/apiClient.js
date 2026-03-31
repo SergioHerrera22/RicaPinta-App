@@ -100,3 +100,23 @@ export async function deleteProduct(id) {
     method: apiContracts.products.delete.method,
   });
 }
+
+export async function getAfipStatus() {
+  return request(apiContracts.afip.status.url, {
+    method: apiContracts.afip.status.method,
+  });
+}
+
+export async function syncSaleWithAfip(payload) {
+  return request(apiContracts.afip.syncSale.url, {
+    method: apiContracts.afip.syncSale.method,
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function syncPendingAfipSales() {
+  return request(apiContracts.afip.syncPending.url, {
+    method: apiContracts.afip.syncPending.method,
+    body: JSON.stringify({}),
+  });
+}

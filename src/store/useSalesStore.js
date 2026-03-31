@@ -8,6 +8,9 @@ import {
   createSale,
   deleteProduct,
   fetchProducts,
+  getAfipStatus,
+  syncPendingAfipSales as syncPendingAfipSalesApi,
+  syncSaleWithAfip as syncSaleWithAfipApi,
   updateProduct,
 } from "../services/apiClient";
 import {
@@ -16,7 +19,30 @@ import {
 } from "../services/offlineSync";
 
 const DATA_MODE = import.meta.env.VITE_DATA_MODE || "local";
+const AFIP_ENABLED =
+  String(import.meta.env.VITE_AFIP_ENABLED || "false").toLowerCase() === "true";
+const AFIP_DEFAULT_CBTE_TYPE = Number(import.meta.env.VITE_AFIP_CBTE_TIPO || 6);
+const AFIP_DEFAULT_PTO_VTA = Number(import.meta.env.VITE_AFIP_PTO_VTA || 1);
 const isBrowser = typeof window !== "undefined";
+
+const RECEIPT_TYPE_MAP = {
+  ticket: { label: "Ticket", afipCbteType: 6 },
+  "factura-a": { label: "Factura A", afipCbteType: 1 },
+  "factura-b": { label: "Factura B", afipCbteType: 6 },
+};
+
+const TAX_CONDITION_LABELS = {
+  "consumidor-final": "Consumidor Final",
+  "responsable-inscripto": "Responsable Inscripto",
+  monotributista: "Monotributista",
+  exento: "Exento",
+};
+
+const DOC_TYPE_MAP = {
+  dni: { label: "DNI", afipDocType: 96 },
+  cuit: { label: "CUIT", afipDocType: 80 },
+  none: { label: "Sin identificar", afipDocType: 99 },
+};
 
 const roundPrice = (value) => Math.round(value);
 
@@ -54,7 +80,179 @@ const updatePricesLocal = (products, { scope, category, percent }) => {
   });
 };
 
-const buildSaleFromState = (state, { customerName, paymentMethod }) => {
+const normalizeDocumentNumber = (value) =>
+  String(value || "").replace(/\D/g, "");
+
+const getFiscalProfile = ({ customer = {}, fiscal = {} }) => {
+  const receiptKey = fiscal.receiptType || "ticket";
+  const receipt = RECEIPT_TYPE_MAP[receiptKey] || RECEIPT_TYPE_MAP.ticket;
+
+  const docTypeKey = customer.docType || "dni";
+  const docType = DOC_TYPE_MAP[docTypeKey] || DOC_TYPE_MAP.dni;
+  const docNumber = normalizeDocumentNumber(customer.docNumber);
+
+  const taxConditionKey =
+    customer.taxCondition || customer.taxConditionKey || "consumidor-final";
+
+  return {
+    receiptType: receiptKey,
+    receiptLabel: receipt.label,
+    cbteType: receipt.afipCbteType,
+    ptoVta: AFIP_DEFAULT_PTO_VTA,
+    customerTaxCondition: taxConditionKey,
+    customerTaxConditionLabel:
+      TAX_CONDITION_LABELS[taxConditionKey] || "Consumidor Final",
+    customerDocType: docTypeKey,
+    customerDocTypeLabel: docType.label,
+    customerAfipDocType: docType.afipDocType,
+    customerDocNumber: docNumber,
+    customerAddress: customer.address?.trim() || "",
+  };
+};
+
+const validateFiscalProfile = (profile, paymentMethod, customerName) => {
+  const hasCustomerName = Boolean(String(customerName || "").trim());
+
+  if (
+    paymentMethod === "Cuenta corriente" &&
+    !String(customerName || "").trim()
+  ) {
+    return {
+      ok: false,
+      message: "Para cuenta corriente debes indicar el nombre del cliente.",
+    };
+  }
+
+  if (profile.receiptType !== "ticket" && !hasCustomerName) {
+    return {
+      ok: false,
+      message: "Para Factura A/B debes indicar nombre o razon social.",
+    };
+  }
+
+  if (profile.receiptType === "factura-a") {
+    if (
+      profile.customerDocType !== "cuit" ||
+      profile.customerDocNumber.length !== 11
+    ) {
+      return {
+        ok: false,
+        message: "Factura A requiere CUIT valido de 11 digitos.",
+      };
+    }
+
+    if (profile.customerTaxCondition === "consumidor-final") {
+      return {
+        ok: false,
+        message: "Factura A no puede emitirse a Consumidor Final.",
+      };
+    }
+  }
+
+  if (profile.receiptType === "factura-b") {
+    if (!profile.customerDocNumber || profile.customerDocType === "none") {
+      return {
+        ok: false,
+        message: "Factura B requiere tipo y numero de documento.",
+      };
+    }
+  }
+
+  if (
+    profile.customerDocType === "cuit" &&
+    profile.customerDocNumber.length !== 11
+  ) {
+    return { ok: false, message: "El CUIT debe tener 11 digitos." };
+  }
+
+  if (
+    profile.customerDocType === "dni" &&
+    profile.customerDocNumber &&
+    profile.customerDocNumber.length < 7
+  ) {
+    return { ok: false, message: "El DNI informado es demasiado corto." };
+  }
+
+  return { ok: true };
+};
+
+const buildAfipDraft = (
+  fiscalProfile,
+  status = AFIP_ENABLED ? "pending" : "disabled",
+) => ({
+  enabled: AFIP_ENABLED,
+  status,
+  cae: null,
+  caeDueDate: null,
+  voucherNumber: null,
+  cbteType: fiscalProfile?.cbteType || AFIP_DEFAULT_CBTE_TYPE,
+  cbteLabel: fiscalProfile?.receiptLabel || "Comprobante",
+  ptoVta: fiscalProfile?.ptoVta || AFIP_DEFAULT_PTO_VTA,
+  docType: fiscalProfile?.customerAfipDocType || 99,
+  docTypeLabel: fiscalProfile?.customerDocTypeLabel || "Sin identificar",
+  docNumber:
+    fiscalProfile?.customerDocNumber &&
+    Number.isFinite(Number(fiscalProfile.customerDocNumber))
+      ? Number(fiscalProfile.customerDocNumber)
+      : 0,
+  lastError: null,
+  syncedAt: null,
+});
+
+const patchSaleAfip = (sales, saleId, patch) =>
+  sales.map((sale) =>
+    sale.id === saleId
+      ? {
+          ...sale,
+          afip: {
+            ...(sale.afip || buildAfipDraft()),
+            ...patch,
+          },
+        }
+      : sale,
+  );
+
+const buildAfipSyncPayload = (sale, backendSaleId = null) => ({
+  saleId: backendSaleId,
+  saleReferenceId: sale.id,
+  sale: {
+    id: sale.id,
+    customerName: sale.customerName,
+    customer: {
+      name: sale.customer?.name || sale.customerName,
+      phone: sale.customer?.phone || "",
+      email: sale.customer?.email || "",
+      taxCondition: sale.customer?.taxCondition || "consumidor-final",
+      docType: sale.customer?.docType || "none",
+      docNumber: sale.customer?.docNumber || "",
+      address: sale.customer?.address || "",
+    },
+    paymentMethod: sale.paymentMethod,
+    total: sale.total,
+    createdAt: sale.createdAt,
+    items: sale.items.map((item) => ({
+      productId: item.productId,
+      sku: item.sku,
+      name: item.name,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      subtotal: item.subtotal,
+    })),
+  },
+  fiscal: {
+    cbteType: sale.afip?.cbteType || AFIP_DEFAULT_CBTE_TYPE,
+    ptoVta: sale.afip?.ptoVta || AFIP_DEFAULT_PTO_VTA,
+    docType: sale.afip?.docType || sale.customer?.docAfipType || 99,
+    docNumber:
+      sale.afip?.docNumber || Number(sale.customer?.docNumber || 0) || 0,
+    customerTaxCondition: sale.customer?.taxCondition || "consumidor-final",
+  },
+});
+
+const buildSaleFromState = (
+  state,
+  { customer, paymentMethod, fiscal, afipStatus, observaciones },
+) => {
   const saleNumber = state.recentSales.length + 1;
   const stamp = new Date().toISOString();
   const numbers = makeDocumentNumbers(saleNumber);
@@ -80,16 +278,36 @@ const buildSaleFromState = (state, { customerName, paymentMethod }) => {
     .filter(Boolean);
 
   const total = items.reduce((acc, item) => acc + item.subtotal, 0);
+  const fiscalProfile = getFiscalProfile({ customer, fiscal });
+  const normalizedCustomerName =
+    customer?.name?.trim() ||
+    (fiscalProfile.customerTaxCondition === "consumidor-final"
+      ? "Consumidor final"
+      : "Cliente fiscal");
 
   const sale = {
     id: `SALE-${String(saleNumber).padStart(6, "0")}`,
     createdAt: stamp,
-    customerName: customerName?.trim() || "Consumidor final",
+    customerName: normalizedCustomerName,
+    customer: {
+      name: normalizedCustomerName,
+      phone: customer?.phone?.trim() || "",
+      email: customer?.email?.trim() || "",
+      taxCondition: fiscalProfile.customerTaxCondition,
+      taxConditionLabel: fiscalProfile.customerTaxConditionLabel,
+      docType: fiscalProfile.customerDocType,
+      docTypeLabel: fiscalProfile.customerDocTypeLabel,
+      docAfipType: fiscalProfile.customerAfipDocType,
+      docNumber: fiscalProfile.customerDocNumber,
+      address: fiscalProfile.customerAddress,
+    },
     paymentMethod,
     total,
     internalNumber: numbers.internalNumber,
     ticketNumber: numbers.ticketNumber,
+    afip: buildAfipDraft(fiscalProfile, afipStatus),
     items,
+    observaciones: observaciones || "",
   };
 
   return sale;
@@ -124,18 +342,38 @@ const getSuggestedOrderQty = (product) =>
 const upsertClientContactList = (contacts, nextContact) => {
   const key = normalizeName(nextContact.name);
   const existing = contacts.find(
-    (contact) => normalizeName(contact.name) === key,
+    (contact) =>
+      normalizeName(contact.name) === key ||
+      (nextContact.docNumber && contact.docNumber === nextContact.docNumber),
   );
 
   if (!existing) {
-    return [...contacts, { id: makeId("CLI"), ...nextContact }];
+    return [
+      ...contacts,
+      {
+        id: makeId("CLI"),
+        phone: "",
+        email: "",
+        taxCondition: "consumidor-final",
+        docType: "dni",
+        docNumber: "",
+        address: "",
+        ...nextContact,
+      },
+    ];
   }
 
   return contacts.map((contact) =>
     contact.id === existing.id
       ? {
           ...contact,
+          name: nextContact.name || contact.name,
           phone: nextContact.phone || contact.phone,
+          email: nextContact.email || contact.email,
+          taxCondition: nextContact.taxCondition || contact.taxCondition,
+          docType: nextContact.docType || contact.docType,
+          docNumber: nextContact.docNumber || contact.docNumber,
+          address: nextContact.address || contact.address,
         }
       : contact,
   );
@@ -192,7 +430,7 @@ export const useSalesStore = create(
       cart: [],
       recentSales: [],
       lastDocument: null,
-      activeModule: "ventas",
+      activeModule: "estadisticas",
       clientContacts: [],
       accountMovements: [],
       purchaseOrders: [],
@@ -201,8 +439,17 @@ export const useSalesStore = create(
       pendingOperations: [],
       isOnline: isBrowser ? window.navigator.onLine : true,
       isSyncing: false,
+      isSyncingAfip: false,
       isBootstrapping: false,
       lastSyncAt: null,
+      afipConfig: {
+        enabled: AFIP_ENABLED,
+        status: AFIP_ENABLED ? "unknown" : "disabled",
+        message: AFIP_ENABLED
+          ? "Pendiente de validacion de credenciales"
+          : "Integracion AFIP desactivada",
+        lastCheckAt: null,
+      },
 
       setOnlineStatus: (isOnline) => set({ isOnline }),
 
@@ -230,6 +477,32 @@ export const useSalesStore = create(
                 apiProducts,
               ),
             }));
+          }
+
+          if (AFIP_ENABLED) {
+            try {
+              const afip = await getAfipStatus();
+              set({
+                afipConfig: {
+                  enabled: true,
+                  status: afip?.ok === false ? "error" : "ready",
+                  message:
+                    afip?.message ||
+                    "AFIP operativo para emision de comprobantes.",
+                  lastCheckAt: new Date().toISOString(),
+                },
+              });
+            } catch {
+              set({
+                afipConfig: {
+                  enabled: true,
+                  status: "error",
+                  message:
+                    "No se pudo validar AFIP ahora. Se reintentara en sincronizacion.",
+                  lastCheckAt: new Date().toISOString(),
+                },
+              });
+            }
           }
         } catch {
           // El front sigue operativo en modo local aunque falle el backend.
@@ -339,9 +612,20 @@ export const useSalesStore = create(
           ),
         })),
 
-      upsertClientContact: ({ name, phone }) => {
+      upsertClientContact: ({
+        name,
+        phone,
+        email,
+        taxCondition,
+        docType,
+        docNumber,
+        address,
+      }) => {
         const cleanName = String(name || "").trim();
         const cleanPhone = String(phone || "").trim();
+        const cleanEmail = String(email || "").trim();
+        const cleanDocNumber = normalizeDocumentNumber(docNumber);
+        const cleanAddress = String(address || "").trim();
 
         if (!cleanName) {
           return { ok: false, message: "Indica el nombre del cliente." };
@@ -351,6 +635,11 @@ export const useSalesStore = create(
           clientContacts: upsertClientContactList(state.clientContacts, {
             name: cleanName,
             phone: cleanPhone,
+            email: cleanEmail,
+            taxCondition: taxCondition || "consumidor-final",
+            docType: docType || "dni",
+            docNumber: cleanDocNumber,
+            address: cleanAddress,
           }),
         }));
 
@@ -430,6 +719,118 @@ export const useSalesStore = create(
           ok: failed.length === 0,
           processed,
           pending: failed.length,
+        };
+      },
+
+      syncSaleAfip: async (saleId) => {
+        if (!AFIP_ENABLED) {
+          return { ok: false, message: "Integracion AFIP desactivada." };
+        }
+
+        if (DATA_MODE !== "api") {
+          return {
+            ok: false,
+            message: "La sincronizacion AFIP requiere VITE_DATA_MODE=api.",
+          };
+        }
+
+        const state = get();
+        if (!state.isOnline) {
+          return { ok: false, message: "Sin conexion a internet." };
+        }
+
+        const sale = state.recentSales.find((item) => item.id === saleId);
+        if (!sale) {
+          return { ok: false, message: "Venta no encontrada." };
+        }
+
+        set((store) => ({
+          recentSales: patchSaleAfip(store.recentSales, saleId, {
+            status: "syncing",
+            lastError: null,
+          }),
+          isSyncingAfip: true,
+        }));
+
+        try {
+          const response = await syncSaleWithAfipApi(
+            buildAfipSyncPayload(sale),
+          );
+          const afip = response?.afip || response || {};
+
+          set((store) => ({
+            recentSales: patchSaleAfip(store.recentSales, saleId, {
+              status: "authorized",
+              cae: afip.cae || null,
+              caeDueDate: afip.caeDueDate || afip.vencimientoCae || null,
+              voucherNumber:
+                afip.voucherNumber ||
+                afip.cbteDesde ||
+                afip.numeroComprobante ||
+                null,
+              syncedAt: new Date().toISOString(),
+              lastError: null,
+            }),
+            isSyncingAfip: false,
+          }));
+
+          return { ok: true, afip };
+        } catch (error) {
+          const message = error?.message || "No se pudo sincronizar con AFIP.";
+          set((store) => ({
+            recentSales: patchSaleAfip(store.recentSales, saleId, {
+              status: "error",
+              lastError: message,
+            }),
+            isSyncingAfip: false,
+          }));
+          return { ok: false, message };
+        }
+      },
+
+      syncPendingAfipSales: async () => {
+        if (!AFIP_ENABLED) {
+          return { ok: true, skipped: true };
+        }
+
+        if (DATA_MODE !== "api") {
+          return { ok: false, message: "AFIP requiere modo api." };
+        }
+
+        const state = get();
+        if (!state.isOnline) {
+          return { ok: false, message: "Sin conexion a internet." };
+        }
+
+        // Permite al backend procesar cola fiscal propia si existe.
+        try {
+          await syncPendingAfipSalesApi();
+        } catch {
+          // Si falla el endpoint batch, igualmente intentamos por venta.
+        }
+
+        const candidates = get().recentSales.filter((sale) => {
+          const status = sale.afip?.status;
+          return ["pending", "queued", "error"].includes(status);
+        });
+
+        let synced = 0;
+        let failed = 0;
+
+        for (const sale of candidates) {
+          const result = await get().syncSaleAfip(sale.id);
+          if (result.ok) {
+            synced += 1;
+          } else {
+            failed += 1;
+          }
+        }
+
+        return {
+          ok: failed === 0,
+          synced,
+          failed,
+          pending: Math.max(0, candidates.length - synced),
         };
       },
 
@@ -684,24 +1085,37 @@ export const useSalesStore = create(
         }
       },
 
-      checkout: async ({ customerName, paymentMethod }) => {
+      checkout: async ({ customer, paymentMethod, fiscal, observaciones }) => {
         const state = get();
         if (!state.cart.length) {
           return { ok: false, message: "El carrito esta vacio." };
         }
 
-        if (
-          paymentMethod === "Cuenta corriente" &&
-          !String(customerName || "").trim()
-        ) {
-          return {
-            ok: false,
-            message:
-              "Para cuenta corriente debes indicar el nombre del cliente.",
-          };
+        const fiscalProfile = getFiscalProfile({ customer, fiscal });
+        const fiscalValidation = validateFiscalProfile(
+          fiscalProfile,
+          paymentMethod,
+          customer?.name,
+        );
+        if (!fiscalValidation.ok) {
+          return fiscalValidation;
         }
 
-        const sale = buildSaleFromState(state, { customerName, paymentMethod });
+        const afipStatus = AFIP_ENABLED
+          ? DATA_MODE === "api"
+            ? state.isOnline
+              ? "pending"
+              : "queued"
+            : "local"
+          : "disabled";
+
+        const sale = buildSaleFromState(state, {
+          customer,
+          paymentMethod,
+          fiscal,
+          afipStatus,
+          observaciones,
+        });
         const nextProducts = applySaleToStock(state.products, sale.items);
 
         set({
@@ -728,10 +1142,15 @@ export const useSalesStore = create(
                 ]
               : state.accountMovements,
           clientContacts:
-            sale.paymentMethod === "Cuenta corriente"
+            sale.customerName !== "Consumidor final"
               ? upsertClientContactList(state.clientContacts, {
                   name: sale.customerName,
-                  phone: "",
+                  phone: sale.customer.phone || "",
+                  email: sale.customer.email || "",
+                  taxCondition: sale.customer.taxCondition,
+                  docType: sale.customer.docType,
+                  docNumber: sale.customer.docNumber,
+                  address: sale.customer.address,
                 })
               : state.clientContacts,
         });
@@ -743,6 +1162,25 @@ export const useSalesStore = create(
         const payload = {
           customerName: sale.customerName,
           paymentMethod: sale.paymentMethod,
+          saleReferenceId: sale.id,
+          requestAfipSync: AFIP_ENABLED,
+          observaciones: sale.observaciones,
+          customer: {
+            name: sale.customer.name,
+            phone: sale.customer.phone,
+            email: sale.customer.email,
+            taxCondition: sale.customer.taxCondition,
+            docType: sale.customer.docType,
+            docNumber: sale.customer.docNumber,
+            address: sale.customer.address,
+          },
+          fiscal: {
+            receiptType: fiscalProfile.receiptType,
+            cbteType: fiscalProfile.cbteType,
+            ptoVta: fiscalProfile.ptoVta,
+            docType: fiscalProfile.customerAfipDocType,
+            docNumber: Number(fiscalProfile.customerDocNumber || 0),
+          },
           items: sale.items.map((item) => ({
             productId: item.productId,
             quantity: item.quantity,
@@ -752,14 +1190,73 @@ export const useSalesStore = create(
 
         if (!state.isOnline) {
           state.queueOperation("CREATE_SALE", payload);
+          if (AFIP_ENABLED) {
+            state.queueOperation("SYNC_AFIP_SALE", buildAfipSyncPayload(sale));
+          }
           return { ok: true, sale, queued: true };
         }
 
         try {
-          await createSale(payload);
-          return { ok: true, sale };
+          const createResult = await createSale(payload);
+
+          if (!AFIP_ENABLED) {
+            return { ok: true, sale };
+          }
+
+          try {
+            const backendSaleId =
+              createResult?.sale?.id || createResult?.id || null;
+
+            const afipResponse = await syncSaleWithAfipApi(
+              buildAfipSyncPayload(sale, backendSaleId),
+            );
+            const afip = afipResponse?.afip || afipResponse || {};
+
+            set((store) => ({
+              recentSales: patchSaleAfip(store.recentSales, sale.id, {
+                status: "authorized",
+                cae: afip.cae || null,
+                caeDueDate: afip.caeDueDate || afip.vencimientoCae || null,
+                voucherNumber:
+                  afip.voucherNumber ||
+                  afip.cbteDesde ||
+                  afip.numeroComprobante ||
+                  null,
+                syncedAt: new Date().toISOString(),
+                lastError: null,
+              }),
+            }));
+
+            return { ok: true, sale, afip: afipResponse };
+          } catch (error) {
+            state.queueOperation(
+              "SYNC_AFIP_SALE",
+              buildAfipSyncPayload(sale, createResult?.sale?.id || null),
+            );
+
+            set((store) => ({
+              recentSales: patchSaleAfip(store.recentSales, sale.id, {
+                status: "queued",
+                lastError:
+                  error?.message || "AFIP no disponible. Quedo en cola.",
+              }),
+            }));
+
+            return { ok: true, sale, afipQueued: true };
+          }
         } catch {
           state.queueOperation("CREATE_SALE", payload);
+
+          if (AFIP_ENABLED) {
+            state.queueOperation("SYNC_AFIP_SALE", buildAfipSyncPayload(sale));
+            set((store) => ({
+              recentSales: patchSaleAfip(store.recentSales, sale.id, {
+                status: "queued",
+                lastError: "Venta guardada offline. AFIP pendiente.",
+              }),
+            }));
+          }
+
           return { ok: true, sale, queued: true };
         }
       },
@@ -780,6 +1277,7 @@ export const useSalesStore = create(
         lastDailyCheckDate: state.lastDailyCheckDate,
         pendingOperations: state.pendingOperations,
         lastSyncAt: state.lastSyncAt,
+        afipConfig: state.afipConfig,
       }),
     },
   ),

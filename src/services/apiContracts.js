@@ -55,6 +55,22 @@ export const apiContracts = {
       body: {
         customerName: "Consumidor final",
         paymentMethod: "Efectivo",
+        saleReferenceId: "SALE-000001",
+        requestAfipSync: true,
+        customer: {
+          name: "Consumidor final",
+          taxCondition: "consumidor-final",
+          docType: "dni",
+          docNumber: "12345678",
+          address: "Av. Principal 123",
+        },
+        fiscal: {
+          receiptType: "factura-b",
+          cbteType: 6,
+          ptoVta: 1,
+          docType: 96,
+          docNumber: 12345678,
+        },
         items: [{ productId: "P-001", quantity: 1, unitPrice: 1000 }],
       },
     },
@@ -64,6 +80,36 @@ export const apiContracts = {
       method: "GET",
       url: `${API_BASE_URL}/vouchers/:saleId`,
       description: "Recupera boleta para cliente y comprobante interno",
+    },
+  },
+  afip: {
+    status: {
+      method: "GET",
+      url: `${API_BASE_URL}/afip/status`,
+      description:
+        "Estado de integracion AFIP (credenciales, punto de venta y modo)",
+    },
+    syncSale: {
+      method: "POST",
+      url: `${API_BASE_URL}/afip/sales/sync`,
+      description:
+        "Sincroniza una venta con AFIP y devuelve CAE/numero de comprobante",
+      body: {
+        saleId: "SALE-000001",
+        sale: {
+          customerName: "Consumidor final",
+          total: 1000,
+          paymentMethod: "Efectivo",
+          items: [{ sku: "P-001", quantity: 1, unitPrice: 1000 }],
+        },
+      },
+    },
+    syncPending: {
+      method: "POST",
+      url: `${API_BASE_URL}/afip/sync/pending`,
+      description:
+        "Dispara sincronizacion de comprobantes pendientes en backend",
+      body: {},
     },
   },
   sync: {

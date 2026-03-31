@@ -20,6 +20,7 @@ const USERS = [
 export const rolePermissions = {
   admin: {
     modules: [
+      "estadisticas",
       "ventas",
       "ventas-realizadas",
       "cuenta-corriente",
@@ -32,6 +33,7 @@ export const rolePermissions = {
   },
   ventas: {
     modules: [
+      "estadisticas",
       "ventas",
       "ventas-realizadas",
       "cuenta-corriente",

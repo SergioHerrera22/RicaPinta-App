@@ -46,6 +46,16 @@ export function DocumentsPanel({ documents = [], highlightedDocument = null }) {
       )
       .join("");
 
+    // Observaciones
+    const observacionesHtml = document.observaciones
+      ? `<div class=\"section\" style=\"margin-top:10px;padding:8px 0 0 0;border-top:1px dashed #eab308;color:#b45309;font-size:12px;\"><strong>Observaciones:</strong> ${document.observaciones}</div>`
+      : "";
+
+    const customerDoc = document.customer?.docNumber
+      ? `${document.customer?.docTypeLabel || "Doc"}: ${document.customer.docNumber}`
+      : "Sin documento";
+    const receiptLabel = "Comprobante de venta";
+
     return `
       <!doctype html>
       <html>
@@ -89,7 +99,7 @@ export function DocumentsPanel({ documents = [], highlightedDocument = null }) {
               <div class="small">Av Uruguay, Mediagua San Juan.</div>
               <div class="small">Tel : 2646725647 o 2646307645</div>
               <div class="separator"></div>
-              <div class="subtitle">Comprobante consumidor final</div>
+              <div class="subtitle">${receiptLabel}</div>
               <div style="margin-top:4px;"><span class="tag">ORIGINAL</span></div>
             </div>
 
@@ -97,6 +107,8 @@ export function DocumentsPanel({ documents = [], highlightedDocument = null }) {
               <div class="row"><span><strong>Comprobante:</strong></span><span>${document.ticketNumber}</span></div>
               <div class="row"><span><strong>Fecha:</strong></span><span>${formatDateTime(document.createdAt)}</span></div>
               <div class="row"><span><strong>Cliente:</strong></span><span>${document.customerName}</span></div>
+              <div class="row"><span><strong>Condicion IVA:</strong></span><span>${document.customer?.taxConditionLabel || "Consumidor Final"}</span></div>
+              <div class="row"><span><strong>Documento:</strong></span><span>${customerDoc}</span></div>
               <div class="row"><span><strong>Pago:</strong></span><span>${document.paymentMethod}</span></div>
               <div class="row"><span><strong>Operacion:</strong></span><span>${document.id || "-"}</span></div>
             </div>
@@ -126,6 +138,7 @@ export function DocumentsPanel({ documents = [], highlightedDocument = null }) {
             </div>
 
             <div class="separator"></div>
+            ${observacionesHtml}
             <div class="center small muted">Gracias por su compra.</div>
             <div class="center small muted">Conserve este comprobante.</div>
           </div>
@@ -184,37 +197,39 @@ export function DocumentsPanel({ documents = [], highlightedDocument = null }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {sortedDocuments.map((doc) => (
-                <tr
-                  key={doc.id}
-                  className={`hover:bg-slate-50 ${
-                    highlightedDocument?.id === doc.id ? "bg-amber-50/70" : ""
-                  }`}
-                >
-                  <td className="px-4 py-3 font-semibold text-slate-900">
-                    {doc.ticketNumber}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">
-                    {formatDateTime(doc.createdAt)}
-                  </td>
-                  <td className="px-4 py-3 text-slate-700">
-                    {doc.customerName}
-                  </td>
-                  <td className="px-4 py-3 text-right font-semibold text-slate-900">
-                    {formatMoney(doc.total)}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedDocument(doc)}
-                      className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-500"
-                    >
-                      <FileText size={14} />
-                      Ver detalle
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {sortedDocuments.map((doc) => {
+                return (
+                  <tr
+                    key={doc.id}
+                    className={`hover:bg-slate-50 ${
+                      highlightedDocument?.id === doc.id ? "bg-amber-50/70" : ""
+                    }`}
+                  >
+                    <td className="px-4 py-3 font-semibold text-slate-900">
+                      {doc.ticketNumber}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {formatDateTime(doc.createdAt)}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">
+                      {doc.customerName}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                      {formatMoney(doc.total)}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDocument(doc)}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-500"
+                      >
+                        <FileText size={14} />
+                        Ver detalle
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -241,7 +256,7 @@ export function DocumentsPanel({ documents = [], highlightedDocument = null }) {
                 <p className="text-sm">Av Uruguay, Mediagua San Juan.</p>
                 <p className="text-sm">Tel : 2646725647 o 2646307645</p>
                 <p className="mt-2 text-xs uppercase tracking-[0.16em] text-slate-500">
-                  Comprobante consumidor final
+                  Comprobante de venta
                 </p>
               </header>
 
@@ -259,6 +274,22 @@ export function DocumentsPanel({ documents = [], highlightedDocument = null }) {
                 <p>
                   <strong>Pago:</strong> {selectedDocument.paymentMethod}
                 </p>
+                <p>
+                  <strong>Condicion IVA:</strong>{" "}
+                  {selectedDocument.customer?.taxConditionLabel ||
+                    "Consumidor Final"}
+                </p>
+                <p>
+                  <strong>Documento:</strong>{" "}
+                  {selectedDocument.customer?.docNumber
+                    ? `${selectedDocument.customer?.docTypeLabel || "Doc"} ${selectedDocument.customer.docNumber}`
+                    : "Sin documento"}
+                </p>
+                {selectedDocument.observaciones && (
+                  <p className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-900 border border-amber-200">
+                    <strong>Observaciones:</strong> {selectedDocument.observaciones}
+                  </p>
+                )}
               </div>
 
               <div className="mb-4 overflow-hidden rounded-xl border border-slate-200">

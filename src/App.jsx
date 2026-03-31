@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BarChart3,
   ClipboardList,
   CloudOff,
   LogOut,
@@ -18,16 +19,33 @@ import { TopBar } from "./components/TopBar";
 import { OrdersPanel } from "./components/OrdersPanel";
 import { CurrentAccountPanel } from "./components/CurrentAccountPanel";
 import { SalesHistoryPanel } from "./components/SalesHistoryPanel";
-import { ProductTechLookupPanel } from "./components/ProductTechLookupPanel";
 import { LoginScreen } from "./components/LoginScreen";
 import { useSalesStore } from "./store/useSalesStore";
 import { rolePermissions, useAuthStore } from "./store/useAuthStore";
 
+const SmartDashboard = lazy(() =>
+  import("./components/dashboard/SmartDashboard").then((module) => ({
+    default: module.SmartDashboard,
+  })),
+);
+
 const DATA_MODE = import.meta.env.VITE_DATA_MODE || "local";
+const DEFAULT_SALE_FORM = {
+  customerId: "",
+  customerName: "",
+  customerPhone: "",
+  customerEmail: "",
+  receiptType: "ticket",
+  customerTaxCondition: "consumidor-final",
+  customerDocType: "dni",
+  customerDocNumber: "",
+  customerAddress: "",
+};
 
 function App() {
-  const [customerName, setCustomerName] = useState("");
+  const [saleForm, setSaleForm] = useState(DEFAULT_SALE_FORM);
   const [paymentMethod, setPaymentMethod] = useState("Efectivo");
+  const [salesSearchFocusTick, setSalesSearchFocusTick] = useState(0);
   const alertShownForDateRef = useRef(null);
 
   const { session, isAuthenticating, login, logout } = useAuthStore();
@@ -45,10 +63,12 @@ function App() {
     suppliers,
     pendingOperations,
     isOnline,
+    afipConfig,
     initialize,
     runDailyStockCheck,
     setOnlineStatus,
     syncPendingOperations,
+    syncPendingAfipSales,
     setActiveModule,
     setQuery,
     setCategory,
@@ -144,6 +164,7 @@ function App() {
 
   const modules = useMemo(
     () => [
+      { id: "estadisticas", label: "Estadisticas", icon: BarChart3 },
       { id: "ventas", label: "Vender", icon: WalletCards },
       {
         id: "ventas-realizadas",
@@ -227,13 +248,41 @@ function App() {
   }, [activeModule, setActiveModule, visibleModules]);
 
   useEffect(() => {
-    if (DATA_MODE === "api" && isOnline && pendingOperations.length) {
-      syncPendingOperations();
+    if (DATA_MODE === "api" && isOnline) {
+      if (pendingOperations.length) {
+        syncPendingOperations();
+      }
+
+      if (afipConfig?.enabled) {
+        syncPendingAfipSales();
+      }
     }
-  }, [isOnline, pendingOperations.length, syncPendingOperations]);
+  }, [
+    afipConfig?.enabled,
+    isOnline,
+    pendingOperations.length,
+    syncPendingAfipSales,
+    syncPendingOperations,
+  ]);
 
   const handleCheckout = async () => {
-    const result = await checkout({ customerName, paymentMethod });
+    const result = await checkout({
+      paymentMethod,
+      customer: {
+        id: saleForm.customerId,
+        name: saleForm.customerName,
+        phone: saleForm.customerPhone,
+        email: saleForm.customerEmail,
+        taxCondition: saleForm.customerTaxCondition,
+        docType: saleForm.customerDocType,
+        docNumber: saleForm.customerDocNumber,
+        address: saleForm.customerAddress,
+      },
+      fiscal: {
+        receiptType: saleForm.receiptType,
+      },
+      observaciones: saleForm.observaciones,
+    });
 
     if (!result.ok) {
       window.alert(result.message);
@@ -246,8 +295,9 @@ function App() {
       );
     }
 
-    setCustomerName("");
+    setSaleForm(DEFAULT_SALE_FORM);
     setPaymentMethod("Efectivo");
+    setSalesSearchFocusTick((current) => current + 1);
   };
 
   const handleAddProduct = (productId) => {
@@ -303,6 +353,30 @@ function App() {
     return result;
   };
 
+  const handleSaveClient = (clientData) => {
+    const result = upsertClientContact(clientData);
+    if (!result.ok) {
+      window.alert(result.message);
+      return result;
+    }
+    return result;
+  };
+
+  const handleChangeModule = (moduleId) => {
+    if (moduleId === "ventas" && activeModule !== "ventas") {
+      setSaleForm(DEFAULT_SALE_FORM);
+      setPaymentMethod("Efectivo");
+      setSalesSearchFocusTick((current) => current + 1);
+      setQuery("");
+      setCategory("Todas");
+      if (filters.lowStockOnly) {
+        toggleLowStock();
+      }
+    }
+
+    setActiveModule(moduleId);
+  };
+
   if (!session) {
     return <LoginScreen onLogin={login} loading={isAuthenticating} />;
   }
@@ -324,7 +398,7 @@ function App() {
                 }`}
               >
                 {!isOnline && <CloudOff size={12} />}
-                {isOnline ? "Online" : "Offline"}
+                {isOnline ? "En linea" : "Sin conexion"}
               </span>
 
               <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
@@ -342,128 +416,168 @@ function App() {
               </button>
             </div>
           </div>
-          <h1 className="mt-2 text-3xl font-semibold text-slate-900 md:text-4xl">
-            Gestion de pintureria sincronizada
-          </h1>
-          <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Ventas, stock y precios trabajan juntos. Cada venta descuenta stock
-            y podes actualizar precios por categoria o global en segundos.
-          </p>
         </header>
 
-        <TopBar metrics={metrics} />
-
-        <section className="mt-5 rounded-2xl border border-slate-200 bg-white/70 p-2 backdrop-blur">
-          <div className="flex flex-wrap gap-2">
-            {visibleModules.map((module) => {
-              const Icon = module.icon;
-              const active = activeModule === module.id;
-              return (
-                <button
-                  key={module.id}
-                  type="button"
-                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                    active
-                      ? "bg-slate-900 text-white"
-                      : "bg-white text-slate-700 hover:bg-slate-100"
-                  }`}
-                  onClick={() => setActiveModule(module.id)}
-                >
-                  <Icon size={15} />
-                  {module.label}
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
         {activeModule === "ventas" && (
-          <>
-            <section className="mt-5 grid gap-4 xl:grid-cols-[1.6fr_1fr]">
-              <ProductCatalog
-                products={filteredProducts}
-                categories={categories}
-                filters={filters}
-                onQueryChange={setQuery}
-                onCategoryChange={setCategory}
-                onToggleLowStock={toggleLowStock}
-                onAdd={handleAddProduct}
-              />
-
-              <SaleCart
-                items={cartItems}
-                customerName={customerName}
-                setCustomerName={setCustomerName}
-                paymentMethod={paymentMethod}
-                setPaymentMethod={setPaymentMethod}
-                onQuantityChange={updateCartQuantity}
-                onRemove={removeFromCart}
-                onCheckout={handleCheckout}
-              />
-            </section>
-
-            <section className="mt-5">
-              <ProductTechLookupPanel products={products} />
-            </section>
-          </>
-        )}
-
-        {activeModule === "stock" && (
-          <section className="mt-5">
-            <StockPanel
-              products={products}
-              onAdjustStock={handleAdjustStock}
-              canAdjustStock={permissions.canAdjustStock}
-              onImportProducts={handleImportProduct}
-              onUpdateProduct={handleUpdateProduct}
-              onDeleteProduct={handleDeleteProduct}
-            />
-          </section>
-        )}
-
-        {activeModule === "precios" && (
-          <section className="mt-5">
-            <PricePanel
-              products={products}
-              categories={categories}
-              onApplyBulk={handleBulkUpdate}
-              canUpdatePrices={permissions.canUpdatePrices}
-            />
-          </section>
-        )}
-
-        {activeModule === "pedidos" && (
-          <section className="mt-5">
-            <OrdersPanel
-              orders={purchaseOrders}
-              suppliers={suppliers}
-              products={products}
-              onAddSupplier={addSupplier}
-              onRemoveSupplier={removeSupplier}
-              onAssignSupplier={assignSupplierToOrder}
-              onUpdateNeeded={updateOrderNeededQuantity}
-              onRemoveOrder={removePurchaseOrder}
-            />
-          </section>
-        )}
-
-        {activeModule === "ventas-realizadas" && (
-          <section className="mt-5">
-            <SalesHistoryPanel sales={recentSales} />
-          </section>
-        )}
-
-        {activeModule === "cuenta-corriente" && (
-          <section className="mt-5">
-            <CurrentAccountPanel
-              sales={recentSales}
+          <div className="mb-5 reveal-up">
+            <SaleCart
+              items={cartItems}
+              saleForm={saleForm}
+              setSaleForm={setSaleForm}
               clientContacts={clientContacts}
-              accountMovements={accountMovements}
-              onUpsertClientContact={upsertClientContact}
-              onRegisterAccountPayment={registerAccountPayment}
+              paymentMethod={paymentMethod}
+              setPaymentMethod={setPaymentMethod}
+              onSaveClient={handleSaveClient}
+              onQuantityChange={updateCartQuantity}
+              onRemove={removeFromCart}
+              onCheckout={handleCheckout}
             />
-          </section>
+          </div>
         )}
+
+        <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <main className="min-w-0">
+            {activeModule === "ventas" && (
+              <section className="panel reveal-up">
+                <ProductCatalog
+                  products={filteredProducts}
+                  categories={categories}
+                  filters={filters}
+                  autoFocusQuery
+                  focusToken={salesSearchFocusTick}
+                  onQueryChange={setQuery}
+                  onCategoryChange={setCategory}
+                  onToggleLowStock={toggleLowStock}
+                  onAdd={handleAddProduct}
+                />
+              </section>
+            )}
+
+            {activeModule === "estadisticas" && (
+              <section className="space-y-4">
+                <TopBar metrics={metrics} />
+                <Suspense
+                  fallback={
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div className="panel h-36 animate-pulse bg-slate-100" />
+                      <div className="panel h-36 animate-pulse bg-slate-100" />
+                      <div className="panel h-56 animate-pulse bg-slate-100 lg:col-span-2" />
+                    </div>
+                  }
+                >
+                  <SmartDashboard
+                    metrics={metrics}
+                    products={products}
+                    sales={recentSales}
+                    purchaseOrders={purchaseOrders}
+                    pendingOperations={pendingOperations}
+                    isOnline={isOnline}
+                  />
+                </Suspense>
+              </section>
+            )}
+
+            {activeModule === "stock" && (
+              <section>
+                <StockPanel
+                  products={products}
+                  onAdjustStock={handleAdjustStock}
+                  canAdjustStock={permissions.canAdjustStock}
+                  onImportProducts={handleImportProduct}
+                  onUpdateProduct={handleUpdateProduct}
+                  onDeleteProduct={handleDeleteProduct}
+                />
+              </section>
+            )}
+
+            {activeModule === "precios" && (
+              <section>
+                <PricePanel
+                  products={products}
+                  categories={categories}
+                  onApplyBulk={handleBulkUpdate}
+                  canUpdatePrices={permissions.canUpdatePrices}
+                />
+              </section>
+            )}
+
+            {activeModule === "pedidos" && (
+              <section>
+                <OrdersPanel
+                  orders={purchaseOrders}
+                  suppliers={suppliers}
+                  products={products}
+                  onAddSupplier={addSupplier}
+                  onRemoveSupplier={removeSupplier}
+                  onAssignSupplier={assignSupplierToOrder}
+                  onUpdateNeeded={updateOrderNeededQuantity}
+                  onRemoveOrder={removePurchaseOrder}
+                />
+              </section>
+            )}
+
+            {activeModule === "ventas-realizadas" && (
+              <section>
+                <SalesHistoryPanel
+                  sales={recentSales}
+                />
+              </section>
+            )}
+
+            {activeModule === "cuenta-corriente" && (
+              <section>
+                <CurrentAccountPanel
+                  sales={recentSales}
+                  clientContacts={clientContacts}
+                  accountMovements={accountMovements}
+                  onUpsertClientContact={upsertClientContact}
+                  onRegisterAccountPayment={registerAccountPayment}
+                />
+              </section>
+            )}
+          </main>
+
+          <aside className="panel reveal-up h-fit xl:sticky xl:top-6">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+              Navegacion
+            </p>
+            <h3 className="mt-1 text-xl font-semibold text-slate-900">
+              Modulos principales
+            </h3>
+            <p className="mt-1 text-sm text-slate-600">
+              Acceso directo grande y visible para cambiar de pantalla
+              rapidamente.
+            </p>
+
+            <div className="mt-4 grid gap-3">
+              {visibleModules.map((module) => {
+                const Icon = module.icon;
+                const active = activeModule === module.id;
+                return (
+                  <button
+                    key={module.id}
+                    type="button"
+                    className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-left text-base font-semibold transition ${
+                      active
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : "border-slate-300 bg-white text-slate-700 hover:border-slate-500"
+                    }`}
+                    onClick={() => handleChangeModule(module.id)}
+                  >
+                    <span
+                      className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${
+                        active ? "bg-white/20" : "bg-slate-100"
+                      }`}
+                    >
+                      <Icon size={18} />
+                    </span>
+                    <span>{module.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
+        </div>
       </div>
     </div>
   );
